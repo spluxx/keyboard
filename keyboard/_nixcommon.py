@@ -1,7 +1,12 @@
+
+
+
+
 # -*- coding: utf-8 -*-
 import struct
 import os
 import atexit
+import time
 from time import time as now
 from threading import Thread
 from glob import glob
@@ -61,7 +66,7 @@ class EventDevice(object):
                 self._input_file = open(self.path, 'rb')
             except IOError as e:
                 if e.strerror == 'Permission denied':
-                    print("# ERROR: Failed to read device '{}'. You must be in the 'input' group to access global events. Use 'sudo usermod -a -G input USERNAME' to add user to the required group.".format(self.path))
+                    print('Permission denied ({}). You must be sudo to access global events.'.format(self.path))
                     exit()
 
             def try_close():
@@ -97,17 +102,29 @@ class EventDevice(object):
         self.output_file.flush()
 
 class AggregatedEventDevice(object):
-    def __init__(self, devices, output=None):
+    def __init__(self, output=None):
         self.event_queue = Queue()
-        self.devices = devices
-        self.output = output or self.devices[0]
+        self.output = output
+
         def start_reading(device):
             while True:
                 self.event_queue.put(device.read_event())
-        for device in self.devices:
-            thread = Thread(target=start_reading, args=[device])
-            thread.daemon = True
-            thread.start()
+
+        def mng():
+            latest_paths = []
+            while True:
+                devices = list(list_devices_from_proc('kbd'))
+                new_devices = [d for d in devices if d.path not in latest_paths]
+                latest_paths = [d.path for d in devices]
+                for new_device in new_devices:
+                    thread = Thread(target=start_reading, args=[new_device])
+                    thread.setDaemon(True)
+                    thread.start()
+                time.sleep(1)
+
+        thread = Thread(target=mng, args=[])
+        thread.setDaemon(True)
+        thread.start()
 
     def read_event(self):
         return self.event_queue.get(block=True)
@@ -154,16 +171,9 @@ def aggregate_devices(type_name):
     # We don't aggregate devices from different sources to avoid
     # duplicates.
 
-    devices_from_proc = list(list_devices_from_proc(type_name))
-    if devices_from_proc:
-        return AggregatedEventDevice(devices_from_proc, output=fake_device)
+    return AggregatedEventDevice(output=fake_device)
 
-    # breaks on mouse for virtualbox
-    # was getting /dev/input/by-id/usb-VirtualBox_USB_Tablet-event-mouse
-    devices_from_by_id = list(list_devices_from_by_id(type_name)) or list(list_devices_from_by_id(type_name, by_id=False))
-    if devices_from_by_id:
-        return AggregatedEventDevice(devices_from_by_id, output=fake_device)
 
-    # If no keyboards were found we can only use the fake device to send keys.
-    assert fake_device
-    return fake_device
+def ensure_root():
+    if os.geteuid() != 0:
+        raise ImportError('You must be root to use this library on linux.')
