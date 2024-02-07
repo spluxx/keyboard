@@ -120,7 +120,7 @@ class AggregatedEventDevice(object):
                     thread = Thread(target=start_reading, args=[new_device])
                     thread.setDaemon(True)
                     thread.start()
-                time.sleep(1)
+                time.sleep(0.5)
 
         thread = Thread(target=mng, args=[])
         thread.setDaemon(True)
